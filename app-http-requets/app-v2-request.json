@@ -1,0 +1,12 @@
+{
+  "fields": {
+    "first-name":       { "label": "Given Name",    "placeholder": "e.g. John",              "value": "John",               "required": true  },
+    "last-name":        { "label": "Family Name",   "placeholder": "e.g. Smith",             "value": "Smith",              "required": true  },
+    "email":            { "label": "Work Email",    "placeholder": "e.g. john@company.com",  "value": "john@company.com",   "required": true  },
+    "phone":            { "label": "Mobile Number", "placeholder": "e.g. +1 (555) 000-0000", "value": "+1 (555) 123-4567", "required": true  },
+    "dob":              { "label": "Birthday",                                                "value": "1990-06-15",         "required": true  },
+    "insurance-type":   { "label": "Plan Type",                                              "value": "health",             "required": true  },
+    "password":         { "label": "New Password",  "placeholder": "Min. 12 characters"                                                      },
+    "confirm-password": { "label": "Repeat Password", "placeholder": "Re-enter your password"                                                }
+  }
+}
