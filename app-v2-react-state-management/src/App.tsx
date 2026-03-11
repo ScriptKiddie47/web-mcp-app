@@ -1,582 +1,289 @@
 import { useState, useRef, useEffect } from 'react'
 import './App.css'
 
-type MsgCls = 'bot' | 'user' | 'bot ok' | 'bot err'
+const API_URL = 'http://localhost:8005/ai_data'
 
-interface Message {
-  text: string
-  cls: MsgCls
-}
+const US_STATES = [
+  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA',
+  'HI','ID','IL','IN','IA','KS','KY','LA','ME','MD',
+  'MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
+  'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC',
+  'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY',
+]
 
-interface ExtraField {
-  label: string
-  fieldId: string
-}
 
-interface FieldSchema {
-  label?:       string
-  placeholder?: string
-  required?:    boolean
-  value?:       string
-}
+type MsgRole = 'user' | 'bot' | 'bot-ok' | 'bot-err'
+interface Message { text: string; role: MsgRole }
 
-interface FormSchema {
-  page?: {
-    title?:    string
-    tagline?:  string
-    heading?:  string
-    btnText?:  string
-    btnColor?: string
-    bgColor?:  string
-  }
-  fields?:       Record<string, FieldSchema>
-  addFields?:    { label: string }[]
-  removeFields?: string[]
-}
-
-const STATIC_FIELD_IDS = new Set([
-  'first-name', 'last-name', 'email', 'phone', 'dob',
-  'insurance-type', 'password', 'confirm-password',
-])
-
-const DEFAULT_LABELS: Record<string, string> = {
-  'first-name': 'First Name',
-  'last-name': 'Last Name',
-  'email': 'Email Address',
-  'phone': 'Phone Number',
-  'dob': 'Date of Birth',
-  'insurance-type': 'Insurance Type',
-  'password': 'Password',
-  'confirm-password': 'Confirm Password',
-}
-
-const DEFAULT_PLACEHOLDERS: Record<string, string> = {
-  'first-name': 'Jane',
-  'last-name': 'Doe',
-  'email': 'jane@example.com',
-  'phone': '(555) 000-0000',
-  'dob': '',
-  'insurance-type': '',
-  'password': 'Min. 8 characters',
-  'confirm-password': 'Re-enter password',
-}
-
-const DEFAULT_REQUIRED: Record<string, boolean> = {
-  'first-name': true,
-  'last-name': true,
-  'email': true,
-  'phone': false,
-  'dob': true,
-  'insurance-type': true,
-  'password': true,
-  'confirm-password': true,
+interface ApiResponse {
+  message: string
+  formData: Record<string, string>
 }
 
 export default function App() {
-  // Page-level state
-  const [title, setTitle] = useState('🛡 SafeGuard Insurance')
-  const [tagline, setTagline] = useState('Protecting what matters most')
-  const [heading, setHeading] = useState('Create Your Account')
-  const [btnText, setBtnText] = useState('Create Account')
-  const [btnColor, setBtnColor] = useState('#1a4a8a')
-  const [bgColor, setBgColor] = useState('#f0f4f8')
+  // Personal
+  const [firstName, setFirstName] = useState('')
+  const [lastName,  setLastName]  = useState('')
+  const [email,     setEmail]     = useState('')
+  const [phone,     setPhone]     = useState('')
+  const [dob,       setDob]       = useState('')
+  const [state,     setState]     = useState('')
+  // Vehicle
+  const [vehicleYear,  setVehicleYear]  = useState('')
+  const [vehicleMake,  setVehicleMake]  = useState('')
+  const [vehicleModel, setVehicleModel] = useState('')
+  // Coverage
+  const [coverageType, setCoverageType] = useState('')
+  const [deductible,   setDeductible]   = useState('')
 
-  // Per-field override state
-  const [fieldLabels, setFieldLabels] = useState<Record<string, string>>({})
-  const [fieldPlaceholders, setFieldPlaceholders] = useState<Record<string, string>>({})
-  const [fieldRequired, setFieldRequired] = useState<Record<string, boolean>>({})
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
-
-  // Dynamically added fields
-  const [extraFields, setExtraFields] = useState<ExtraField[]>([])
-
-  // Chat state
-  const [messages, setMessages] = useState<Message[]>([
-    { text: 'Hello! Use the commands below to edit this page.', cls: 'bot' },
+  const [messages,  setMessages]  = useState<Message[]>([
+    { text: "Hi! Tell me about your vehicle and coverage needs and I'll help fill out your quote.", role: 'bot' },
   ])
   const [chatInput, setChatInput] = useState('')
-
-  const chatBoxRef = useRef<HTMLDivElement>(null)
+  const [loading,   setLoading]   = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (chatBoxRef.current) {
-      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Helpers to resolve effective field properties
-  const getLabel = (id: string) =>
-    fieldLabels[id] ??
-    DEFAULT_LABELS[id] ??
-    extraFields.find(f => f.fieldId === id)?.label ??
-    id
+  const quoteReady = !!coverageType && !!(vehicleYear || vehicleMake || vehicleModel)
 
-  const getPlaceholder = (id: string) =>
-    fieldPlaceholders[id] ?? DEFAULT_PLACEHOLDERS[id] ?? ''
-
-  const getRequired = (id: string) =>
-    fieldRequired[id] ?? DEFAULT_REQUIRED[id] ?? false
-
-  const getValue = (id: string) => fieldValues[id] ?? ''
-
-  const setFieldValue = (id: string, value: string) =>
-    setFieldValues(prev => ({ ...prev, [id]: value }))
-
-  function applySchema(schema: FormSchema): string[] {
-    const applied: string[] = []
-
-    if (schema.page) {
-      const p = schema.page
-      if (p.title    !== undefined) { setTitle(p.title);       applied.push('title') }
-      if (p.tagline  !== undefined) { setTagline(p.tagline);   applied.push('tagline') }
-      if (p.heading  !== undefined) { setHeading(p.heading);   applied.push('heading') }
-      if (p.btnText  !== undefined) { setBtnText(p.btnText);   applied.push('btnText') }
-      if (p.btnColor !== undefined) { setBtnColor(p.btnColor); applied.push('btnColor') }
-      if (p.bgColor  !== undefined) { setBgColor(p.bgColor);   applied.push('bgColor') }
-    }
-
-    if (schema.fields) {
-      for (const [fid, fdata] of Object.entries(schema.fields)) {
-        const known = STATIC_FIELD_IDS.has(fid) || extraFields.some(f => f.fieldId === fid)
-        if (!known) continue
-        if (fdata.label       !== undefined) setFieldLabels(prev => ({ ...prev, [fid]: fdata.label! }))
-        if (fdata.placeholder !== undefined) setFieldPlaceholders(prev => ({ ...prev, [fid]: fdata.placeholder! }))
-        if (fdata.required    !== undefined) setFieldRequired(prev => ({ ...prev, [fid]: fdata.required! }))
-        if (fdata.value       !== undefined) setFieldValues(prev => ({ ...prev, [fid]: fdata.value! }))
-        applied.push(`field:${fid}`)
+  function applyFormData(data: Record<string, string>) {
+    for (const [key, value] of Object.entries(data)) {
+      switch (key) {
+        case 'first_name':
+        case 'first-name':     setFirstName(value);    break
+        case 'last_name':
+        case 'last-name':      setLastName(value);     break
+        case 'email':          setEmail(value);        break
+        case 'phone':          setPhone(value);        break
+        case 'dob':            setDob(value);          break
+        case 'state':          setState(value);        break
+        case 'vehicle_year':
+        case 'vehicle-year':   setVehicleYear(value);  break
+        case 'vehicle_make':
+        case 'vehicle-make':   setVehicleMake(value);  break
+        case 'vehicle_model':
+        case 'vehicle-model':  setVehicleModel(value); break
+        case 'coverage_type':
+        case 'coverage-type':  setCoverageType(value); break
+        case 'deductible':     setDeductible(value);   break
       }
     }
-
-    if (schema.addFields) {
-      for (const entry of schema.addFields) {
-        const fieldId = entry.label.toLowerCase().replace(/\s+/g, '-')
-        setExtraFields(prev => {
-          if (prev.some(f => f.fieldId === fieldId)) return prev
-          return [...prev, { label: entry.label, fieldId }]
-        })
-        applied.push(`add:${fieldId}`)
-      }
-    }
-
-    if (schema.removeFields) {
-      setExtraFields(prev => prev.filter(f => !schema.removeFields!.includes(f.fieldId)))
-      applied.push(`removed:${schema.removeFields.join(',')}`)
-    }
-
-    return applied
   }
 
-  async function handleLoad(raw: string, url: string): Promise<void> {
+  async function sendMessage() {
+    const text = chatInput.trim()
+    if (!text || loading) return
+    setChatInput('')
+
+    const formData = {
+      'first-name':    firstName,
+      'last-name':     lastName,
+      'email':         email,
+      'phone':         phone,
+      'dob':           dob,
+      'state':         state,
+      'vehicle-year':  vehicleYear,
+      'vehicle-make':  vehicleMake,
+      'vehicle-model': vehicleModel,
+      'coverage-type': coverageType,
+      'deductible':    deductible,
+    }
+
     setMessages(prev => [
       ...prev,
-      { text: raw, cls: 'user' },
-      { text: 'Loading…', cls: 'bot' },
+      { text, role: 'user' },
+      { text: 'Thinking…', role: 'bot' },
     ])
+    setLoading(true)
 
-    let data: unknown
     try {
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`)
-      }
-      data = await response.json()
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, formData }),
+      })
+
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+
+      const json = await res.json() as ApiResponse
+      applyFormData(json.formData)
+
+      setMessages(prev => [
+        ...prev.slice(0, -1),
+        { text: json.message, role: 'bot-ok' },
+      ])
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setMessages(prev => [
         ...prev.slice(0, -1),
-        { text: `Error: ${msg}`, cls: 'bot err' },
+        { text: `Error: ${msg}`, role: 'bot-err' },
       ])
-      return
+    } finally {
+      setLoading(false)
     }
-
-    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-      setMessages(prev => [
-        ...prev.slice(0, -1),
-        { text: 'Error: Response is not a JSON object.', cls: 'bot err' },
-      ])
-      return
-    }
-
-    const schema = data as FormSchema
-    const applied = applySchema(schema)
-    const summary = applied.length > 0
-      ? `Schema applied. Updated: ${applied.join(', ')}.`
-      : 'Schema loaded but nothing to update.'
-
-    setMessages(prev => [
-      ...prev.slice(0, -1),
-      { text: summary, cls: 'bot ok' },
-    ])
-  }
-
-  function handleSend() {
-    const raw = chatInput.trim()
-    if (!raw) return
-    setChatInput('')
-    const cmd = raw.toLowerCase()
-    if (cmd.startsWith('load ')) {
-      const url = raw.slice('load '.length).trim()
-      if (!url) {
-        setMessages(prev => [
-          ...prev,
-          { text: raw, cls: 'user' },
-          { text: 'Usage: load <url>', cls: 'bot err' },
-        ])
-        return
-      }
-      void handleLoad(raw, url)
-      return
-    }
-    runCommand()
-  }
-
-  function runCommand() {
-    const raw = chatInput.trim()
-    if (!raw) return
-    setChatInput('')
-
-    const cmd = raw.toLowerCase()
-
-    const addBoth = (botText: string, botCls: MsgCls) =>
-      setMessages(prev => [
-        ...prev,
-        { text: raw, cls: 'user' },
-        { text: botText, cls: botCls },
-      ])
-
-    const ok  = (text: string) => addBoth(text, 'bot ok')
-    const err = (text: string) => addBoth(text, 'bot err')
-    const info = (text: string) => addBoth(text, 'bot')
-
-    const isValidField = (fid: string) =>
-      STATIC_FIELD_IDS.has(fid) || extraFields.some(f => f.fieldId === fid)
-
-    // title <text>
-    if (cmd.startsWith('title ')) {
-      setTitle(raw.slice('title '.length))
-      return ok('Company title updated.')
-    }
-
-    // tagline <text>
-    if (cmd.startsWith('tagline ')) {
-      setTagline(raw.slice('tagline '.length))
-      return ok('Tagline updated.')
-    }
-
-    // heading <text>
-    if (cmd.startsWith('heading ')) {
-      setHeading(raw.slice('heading '.length))
-      return ok('Form heading updated.')
-    }
-
-    // button text <text>
-    if (cmd.startsWith('button text ')) {
-      setBtnText(raw.slice('button text '.length))
-      return ok('Button text updated.')
-    }
-
-    // button color <color>
-    if (cmd.startsWith('button color ')) {
-      const color = raw.slice('button color '.length)
-      setBtnColor(color)
-      return ok(`Button color set to "${color}".`)
-    }
-
-    // background <color>
-    if (cmd.startsWith('background ')) {
-      const color = raw.slice('background '.length)
-      setBgColor(color)
-      return ok(`Background set to "${color}".`)
-    }
-
-    // add field <label>
-    if (cmd.startsWith('add field ')) {
-      const label = raw.slice('add field '.length)
-      const fieldId = label.toLowerCase().replace(/\s+/g, '-')
-      setExtraFields(prev => [...prev, { label, fieldId }])
-      return ok(`Field "${label}" added.`)
-    }
-
-    // remove field <label>
-    if (cmd.startsWith('remove field ')) {
-      const label = raw.slice('remove field '.length).toLowerCase()
-      const found = extraFields.some(f => f.label.toLowerCase() === label)
-      if (!found) return err(`No added field named "${label}" found.`)
-      setExtraFields(prev => prev.filter(f => f.label.toLowerCase() !== label))
-      return ok(`Field "${label}" removed.`)
-    }
-
-    // label <field-id> <new-label>
-    if (cmd.startsWith('label ')) {
-      const rest = raw.slice('label '.length)
-      const sp = rest.indexOf(' ')
-      if (sp === -1) return err('Usage: label <field-id> <new label text>')
-      const fieldId = rest.slice(0, sp).toLowerCase()
-      const newLabel = rest.slice(sp + 1)
-      if (!isValidField(fieldId)) return err(`No field with id "${fieldId}" found.`)
-      setFieldLabels(prev => ({ ...prev, [fieldId]: newLabel }))
-      return ok(`Label for "${fieldId}" set to "${newLabel}".`)
-    }
-
-    // placeholder <field-id> <text>
-    if (cmd.startsWith('placeholder ')) {
-      const rest = raw.slice('placeholder '.length)
-      const sp = rest.indexOf(' ')
-      if (sp === -1) return err('Usage: placeholder <field-id> <text>')
-      const fieldId = rest.slice(0, sp).toLowerCase()
-      const text = rest.slice(sp + 1)
-      if (!isValidField(fieldId)) return err(`No field with id "${fieldId}" found.`)
-      setFieldPlaceholders(prev => ({ ...prev, [fieldId]: text }))
-      return ok(`Placeholder for "${fieldId}" updated.`)
-    }
-
-    // fill <field-id> <value>
-    if (cmd.startsWith('fill ')) {
-      const rest = raw.slice('fill '.length)
-      const sp = rest.indexOf(' ')
-      if (sp === -1) return err('Usage: fill <field-id> <value>')
-      const fieldId = rest.slice(0, sp).toLowerCase()
-      const value = rest.slice(sp + 1)
-      if (!isValidField(fieldId)) return err(`No field with id "${fieldId}" found.`)
-      setFieldValue(fieldId, value)
-      return ok(`Field "${fieldId}" filled.`)
-    }
-
-    // clear <field-id>
-    if (cmd.startsWith('clear ')) {
-      const fieldId = raw.slice('clear '.length).trim().toLowerCase()
-      if (!isValidField(fieldId)) return err(`No field with id "${fieldId}" found.`)
-      setFieldValue(fieldId, '')
-      return ok(`Field "${fieldId}" cleared.`)
-    }
-
-    // require <field-id>
-    if (cmd.startsWith('require ')) {
-      const fieldId = raw.slice('require '.length).trim().toLowerCase()
-      if (!isValidField(fieldId)) return err(`No field with id "${fieldId}" found.`)
-      setFieldRequired(prev => ({ ...prev, [fieldId]: true }))
-      return ok(`Field "${fieldId}" is now required.`)
-    }
-
-    // optional <field-id>
-    if (cmd.startsWith('optional ')) {
-      const fieldId = raw.slice('optional '.length).trim().toLowerCase()
-      if (!isValidField(fieldId)) return err(`No field with id "${fieldId}" found.`)
-      setFieldRequired(prev => ({ ...prev, [fieldId]: false }))
-      return ok(`Field "${fieldId}" is now optional.`)
-    }
-
-    // help
-    if (cmd === 'help') {
-      return info(
-        'Page: title, tagline, heading, button text, button color, background, add field, remove field\n' +
-        'Input fields: label, placeholder, fill, clear, require, optional — all take a field-id first (e.g. first-name, email, phone…)\n' +
-        'load <url> — fetch a JSON schema from a URL and apply it to the form'
-      )
-    }
-
-    err(`Unknown command: "${raw}". Type "help" for the list.`)
   }
 
   return (
     <>
-      {/* Left: signup form */}
-      <div id="form-area" style={{ background: bgColor }}>
+      {/* Left: quote form */}
+      <div id="form-area">
         <div className="container">
           <div className="logo">
-            <h1 id="company-title">{title}</h1>
-            <p id="company-tagline">{tagline}</p>
+            <h1 id="company-title">🛡 SafeGuard Insurance</h1>
+            <p id="company-tagline">Fast, accurate auto insurance quotes</p>
           </div>
 
-          <h2 id="form-heading">{heading}</h2>
+          <h2 id="form-heading">Get Your Auto Quote</h2>
 
           <form action="#" method="POST">
+            {/* ── Personal Info ── */}
+            <p className="section-label">Personal Information</p>
+
             <div className="row">
               <div className="form-group">
-                <label htmlFor="first-name">{getLabel('first-name')}</label>
-                <input
-                  type="text"
-                  id="first-name"
-                  name="first_name"
-                  placeholder={getPlaceholder('first-name')}
-                  value={getValue('first-name')}
-                  onChange={e => setFieldValue('first-name', e.target.value)}
-                  required={getRequired('first-name')}
-                />
+                <label htmlFor="first-name">First Name</label>
+                <input type="text" id="first-name" name="first_name"
+                  value={firstName} onChange={e => setFirstName(e.target.value)} />
               </div>
               <div className="form-group">
-                <label htmlFor="last-name">{getLabel('last-name')}</label>
-                <input
-                  type="text"
-                  id="last-name"
-                  name="last_name"
-                  placeholder={getPlaceholder('last-name')}
-                  value={getValue('last-name')}
-                  onChange={e => setFieldValue('last-name', e.target.value)}
-                  required={getRequired('last-name')}
-                />
+                <label htmlFor="last-name">Last Name</label>
+                <input type="text" id="last-name" name="last_name"
+                  value={lastName} onChange={e => setLastName(e.target.value)} />
               </div>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="email">{getLabel('email')}</label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                placeholder={getPlaceholder('email')}
-                value={getValue('email')}
-                onChange={e => setFieldValue('email', e.target.value)}
-                required={getRequired('email')}
-              />
+            <div className="row">
+              <div className="form-group">
+                <label htmlFor="email">Email</label>
+                <input type="email" id="email" name="email"
+                  value={email} onChange={e => setEmail(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="phone">Phone</label>
+                <input type="tel" id="phone" name="phone"
+                  value={phone} onChange={e => setPhone(e.target.value)} />
+              </div>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="phone">{getLabel('phone')}</label>
-              <input
-                type="tel"
-                id="phone"
-                name="phone"
-                placeholder={getPlaceholder('phone')}
-                value={getValue('phone')}
-                onChange={e => setFieldValue('phone', e.target.value)}
-                required={getRequired('phone')}
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="dob">{getLabel('dob')}</label>
-              <input
-                type="date"
-                id="dob"
-                name="dob"
-                value={getValue('dob')}
-                onChange={e => setFieldValue('dob', e.target.value)}
-                required={getRequired('dob')}
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="insurance-type">{getLabel('insurance-type')}</label>
-              <select
-                id="insurance-type"
-                name="insurance_type"
-                value={getValue('insurance-type')}
-                onChange={e => setFieldValue('insurance-type', e.target.value)}
-                required={getRequired('insurance-type')}
-              >
-                <option value="" disabled>Select a plan</option>
-                <option value="auto">Auto Insurance</option>
-                <option value="home">Home Insurance</option>
-                <option value="life">Life Insurance</option>
-                <option value="health">Health Insurance</option>
-                <option value="renters">Renters Insurance</option>
-              </select>
+            <div className="row">
+              <div className="form-group">
+                <label htmlFor="dob">Date of Birth</label>
+                <input type="date" id="dob" name="dob"
+                  value={dob} onChange={e => setDob(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="state">State</label>
+                <select id="state" name="state"
+                  value={state} onChange={e => setState(e.target.value)}>
+                  <option value="" disabled>Select state</option>
+                  {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             </div>
 
             <hr className="divider" />
 
-            {/* Dynamically added fields */}
-            <div id="extra-fields">
-              {extraFields.map(field => (
-                <div key={field.fieldId} className="form-group">
-                  <label htmlFor={field.fieldId}>{getLabel(field.fieldId)}</label>
-                  <input
-                    type="text"
-                    id={field.fieldId}
-                    name={field.fieldId}
-                    placeholder={getPlaceholder(field.fieldId)}
-                    value={getValue(field.fieldId)}
-                    onChange={e => setFieldValue(field.fieldId, e.target.value)}
-                    required={getRequired(field.fieldId)}
-                  />
-                </div>
-              ))}
+            {/* ── Vehicle Details ── */}
+            <p className="section-label">Vehicle Details</p>
+
+            <div className="row">
+              <div className="form-group form-group--sm">
+                <label htmlFor="vehicle-year">Year</label>
+                <input type="text" id="vehicle-year" name="vehicle_year"
+                  placeholder="e.g. 2020"
+                  value={vehicleYear} onChange={e => setVehicleYear(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="vehicle-make">Make</label>
+                <input type="text" id="vehicle-make" name="vehicle_make"
+                  placeholder="e.g. Toyota"
+                  value={vehicleMake} onChange={e => setVehicleMake(e.target.value)} />
+              </div>
+              <div className="form-group">
+                <label htmlFor="vehicle-model">Model</label>
+                <input type="text" id="vehicle-model" name="vehicle_model"
+                  placeholder="e.g. Camry"
+                  value={vehicleModel} onChange={e => setVehicleModel(e.target.value)} />
+              </div>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="password">{getLabel('password')}</label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                placeholder={getPlaceholder('password')}
-                value={getValue('password')}
-                onChange={e => setFieldValue('password', e.target.value)}
-                required={getRequired('password')}
-              />
+            <hr className="divider" />
+
+            {/* ── Coverage ── */}
+            <p className="section-label">Coverage</p>
+
+            <div className="row">
+              <div className="form-group">
+                <label htmlFor="coverage-type">Coverage Type</label>
+                <select id="coverage-type" name="coverage_type"
+                  value={coverageType} onChange={e => setCoverageType(e.target.value)}>
+                  <option value="" disabled>Select coverage</option>
+                  <option value="liability">Liability Only</option>
+                  <option value="collision">Collision</option>
+                  <option value="comprehensive">Comprehensive</option>
+                  <option value="full">Full Coverage</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label htmlFor="deductible">Deductible</label>
+                <select id="deductible" name="deductible"
+                  value={deductible} onChange={e => setDeductible(e.target.value)}>
+                  <option value="" disabled>Select deductible</option>
+                  <option value="500">$500</option>
+                  <option value="1000">$1,000</option>
+                  <option value="2000">$2,000</option>
+                </select>
+              </div>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="confirm-password">{getLabel('confirm-password')}</label>
-              <input
-                type="password"
-                id="confirm-password"
-                name="confirm_password"
-                placeholder={getPlaceholder('confirm-password')}
-                value={getValue('confirm-password')}
-                onChange={e => setFieldValue('confirm-password', e.target.value)}
-                required={getRequired('confirm-password')}
-              />
-            </div>
+            {/* ── Quote Result ── */}
+            {quoteReady && (
+              <div id="quote-result">
+                <span className="quote-label">Your Quote is Ready</span>
+                <span className="quote-amount">Contact Us</span>
+                <span className="quote-note">
+                  Submit your request and an agent will provide your personalized rate
+                </span>
+              </div>
+            )}
 
-            <button
-              type="submit"
-              className="btn"
-              id="submit-btn"
-              style={{ background: btnColor }}
-            >
-              {btnText}
+            <button type="submit" className="btn" id="submit-btn" style={{ background: '#1a4a8a' }}>
+              Submit Quote Request
             </button>
           </form>
-
-          <p className="login-link" id="login-link">
-            Already have an account? <a href="#">Log in</a>
-          </p>
         </div>
       </div>
 
       {/* Right: chat panel */}
       <div id="chat-panel">
         <div id="chat-header">
-          Page Editor
-          <p>Type a command to change the form</p>
+          <span>🚗 Quote Assistant</span>
+          <p>Describe your vehicle or coverage needs</p>
         </div>
 
-        <div id="chat-messages" ref={chatBoxRef}>
+        <div id="chat-messages">
           {messages.map((msg, i) => (
-            <div key={i} className={`msg ${msg.cls}`}>{msg.text}</div>
+            <div key={i} className={`msg ${msg.role}`}>{msg.text}</div>
           ))}
-        </div>
-
-        <div id="help-box">
-          <strong>Page commands</strong>
-          title &lt;text&gt; · tagline &lt;text&gt; · heading &lt;text&gt;<br />
-          button text &lt;text&gt; · button color &lt;color&gt;<br />
-          background &lt;color&gt;<br />
-          add field &lt;label&gt; · remove field &lt;label&gt;<br />
-          <strong>Input field commands</strong>
-          label &lt;field-id&gt; &lt;text&gt;<br />
-          placeholder &lt;field-id&gt; &lt;text&gt;<br />
-          fill &lt;field-id&gt; &lt;value&gt;<br />
-          clear &lt;field-id&gt;<br />
-          require &lt;field-id&gt; · optional &lt;field-id&gt;<br />
-          <em>IDs: first-name, last-name, email, phone, dob, password, confirm-password, insurance-type</em><br />
-          <strong>API</strong>
-          load &lt;url&gt; — fetch JSON schema &amp; apply to form<br />
-          help
+          <div ref={messagesEndRef} />
         </div>
 
         <div id="chat-input-row">
           <input
             type="text"
             id="chat-input"
-            placeholder="Type a command…"
+            placeholder="e.g. 2019 Toyota Camry, full coverage"
             value={chatInput}
+            disabled={loading}
             onChange={e => setChatInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleSend() }}
+            onKeyDown={e => { if (e.key === 'Enter') void sendMessage() }}
           />
-          <button onClick={handleSend}>Run</button>
+          <button onClick={() => void sendMessage()} disabled={loading}>
+            {loading ? '…' : 'Send'}
+          </button>
         </div>
       </div>
     </>
